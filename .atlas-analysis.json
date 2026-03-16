@@ -1,0 +1,62 @@
+{
+  "projectType": "general",
+  "projectName": "Book Store API Automation Testing (Rest-Assured)",
+  "projectDescription": "A BDD API test automation framework built with Cucumber, REST-Assured, and Java that validates Place API endpoints using Gherkin feature files and JUnit.",
+  "theme": "sequoia",
+  "primaryColor": "#2563EB",
+  "lightColor": "#EFF6FF",
+  "darkColor": "#1E3A8A",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Framework Architecture",
+            "pages": ["architecture/overview", "architecture/project-structure", "architecture/bdd-workflow"]
+          },
+          {
+            "group": "Guides",
+            "pages": ["guides/configuration", "guides/writing-tests", "guides/running-tests", "guides/reports"]
+          },
+          {
+            "group": "Reference",
+            "pages": ["reference/api-resources", "reference/step-definitions", "reference/test-data-build", "reference/utils", "reference/pojo-classes"]
+          },
+          {
+            "group": "FAQ",
+            "pages": ["faq"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "BDD test scenarios written in Gherkin (Cucumber)",
+    "REST-Assured for fluent HTTP request/response handling",
+    "POJO-based request body serialization with Jackson",
+    "Cucumber Hooks for scenario lifecycle management",
+    "Enum-driven API endpoint registry (APIResources)",
+    "Externalized configuration via global.properties",
+    "JSON test reports via maven-cucumber-reporting",
+    "Request/response logging to file for debugging"
+  ],
+  "publicApiSurface": [
+    "addPlaceAPI — POST /maps/api/place/add/json",
+    "getPlaceAPI — GET /maps/api/place/get/json",
+    "deletePlaceAPI — POST /maps/api/place/delete/json",
+    "StepDefinition.add_place_payload_with(name, language, address)",
+    "StepDefinition.user_calls_with_http_request(resource, method)",
+    "StepDefinition.verify_place_id_created_maps_to_using(expectedName, resource)",
+    "StepDefinition.delete_place_payload()",
+    "TestDataBuild.addPlacePayload(name, language, address)",
+    "TestDataBuild.deletePlacePayload(place_id)",
+    "Utils.requestSpecification()",
+    "Utils.getGlobalValue(key)",
+    "Utils.getJsonPath(response, key)"
+  ]
+}

@@ -1,0 +1,127 @@
+---
+title: TestDataBuild
+description: Factory class that constructs request payloads for Add Place and Delete Place API calls.
+---
+
+`TestDataBuild` is a plain Java class in the `resources` package that acts as a payload factory. Step definitions instantiate it once per scenario and call its methods to get fully populated request bodies. Keeping payload construction here, separate from step definitions, makes it straightforward to add new test data variants without touching Gherkin glue code.
+
+```java
+public class TestDataBuild
+```
+
+## `addPlacePayload(name, language, address)`
+
+Builds and returns a fully populated `AddPlace` POJO. REST-Assured serializes this to JSON via Jackson before sending the request.
+
+```java
+public AddPlace addPlacePayload(String name, String language, String address)
+```
+
+### Parameters
+
+<ParamField path="name" type="string" required>
+  Name of the place. Mapped to `AddPlace.name`. Passed through from the Gherkin `Examples` table.
+</ParamField>
+
+<ParamField path="language" type="string" required>
+  Language of the place entry. Mapped to `AddPlace.language`. Passed through from the Gherkin `Examples` table.
+</ParamField>
+
+<ParamField path="address" type="string" required>
+  Street address. Mapped to `AddPlace.address`. Passed through from the Gherkin `Examples` table.
+</ParamField>
+
+### Hardcoded defaults
+
+The following values are set unconditionally on every call:
+
+| Field | Hardcoded value |
+|---|---|
+| `accuracy` | `50` |
+| `phoneNumber` | `"+20 1234567890"` |
+| `website` | `"https://rahulshettyacademy.com"` |
+| `types` | `["home", "house"]` |
+| `location.lat` | `-40.123456` |
+| `location.lng` | `40.987654` |
+
+### Dynamic parameters
+
+The three parameters — `name`, `language`, and `address` — are the only values that vary between test data rows.
+
+### Serialized JSON output
+
+With `name="Ritz Carlton"`, `language="French"`, `address="123 Main St"`, REST-Assured serializes the POJO to:
+
+```json
+{
+  "accuracy": 50,
+  "name": "Ritz Carlton",
+  "phoneNumber": "+20 1234567890",
+  "address": "123 Main St",
+  "website": "https://rahulshettyacademy.com",
+  "language": "French",
+  "location": {
+    "lat": -40.123456,
+    "lng": 40.987654
+  },
+  "types": ["home", "house"]
+}
+```
+
+<Note>
+  Field ordering in the serialized JSON depends on Jackson's default behavior (declaration order in the class). The API should treat JSON objects as unordered.
+</Note>
+
+## `deletePlacePayload(place_id)`
+
+Returns a raw JSON string for the Delete Place request body. Unlike `addPlacePayload`, this method does not use a POJO — it builds the JSON string directly via string concatenation.
+
+```java
+public String deletePlacePayload(String place_id)
+```
+
+### Parameter
+
+<ParamField path="place_id" type="string" required>
+  The place ID to delete. Typically the static `StepDefinition.place_id` value populated by a prior Add Place scenario.
+</ParamField>
+
+### Return value
+
+A raw JSON string with Windows-style line endings (`\r\n\t`):
+
+```json
+{
+	"place_id":"<place_id value>"
+}
+```
+
+For example, with `place_id="abc123"`:
+
+```json
+{
+	"place_id":"abc123"
+}
+```
+
+<Tip>
+  Because REST-Assured accepts a `String` body directly, there is no serialization step — the string is sent as-is. Ensure the `place_id` value does not contain characters that need JSON escaping.
+</Tip>
+
+## When to extend this class
+
+Add a new method to `TestDataBuild` whenever you need a new request body shape:
+
+- A new API endpoint with its own payload structure — create a new POJO in the `pojo` package and add a builder method here.
+- A variant of `addPlacePayload` with different defaults — add an overload or a new method with the extra parameters.
+- Edge-case data (e.g. missing required fields, maximum field lengths) — add dedicated methods that return intentionally incomplete or boundary-value payloads.
+
+```java
+// Example: adding a payload for an Update Place endpoint
+public UpdatePlace updatePlacePayload(String place_id, String newName) {
+    UpdatePlace updatePlace = new UpdatePlace();
+    updatePlace.setPlaceId(place_id);
+    updatePlace.setName(newName);
+    return updatePlace;
+}
+```

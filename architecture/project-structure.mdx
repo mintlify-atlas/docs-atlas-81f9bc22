@@ -1,0 +1,176 @@
+---
+title: 'Project structure'
+description: 'Detailed breakdown of every directory, package, and file in the BDD API automation framework.'
+---
+
+## Directory tree
+
+<Tree>
+  <Tree.Folder name="APIFramework" defaultOpen>
+    <Tree.Folder name="src" defaultOpen>
+      <Tree.Folder name="main" defaultOpen>
+        <Tree.Folder name="java" defaultOpen>
+          <Tree.Folder name="pojo" defaultOpen>
+            <Tree.File name="AddPlace.java" />
+            <Tree.File name="Location.java" />
+            <Tree.File name="Results.java" />
+          </Tree.Folder>
+        </Tree.Folder>
+      </Tree.Folder>
+      <Tree.Folder name="test" defaultOpen>
+        <Tree.Folder name="java" defaultOpen>
+          <Tree.Folder name="resources" defaultOpen>
+            <Tree.File name="APIResources.java" />
+            <Tree.File name="TestDataBuild.java" />
+            <Tree.File name="Utils.java" />
+            <Tree.File name="global.properties" />
+          </Tree.Folder>
+          <Tree.Folder name="stepDefinitions" defaultOpen>
+            <Tree.File name="Hooks.java" />
+            <Tree.File name="StepDefinition.java" />
+          </Tree.Folder>
+          <Tree.Folder name="cucumber.Options" defaultOpen>
+            <Tree.File name="TestRunner.java" />
+          </Tree.Folder>
+        </Tree.Folder>
+        <Tree.Folder name="resources" defaultOpen>
+          <Tree.Folder name="features" defaultOpen>
+            <Tree.File name="placeValidations.feature" />
+          </Tree.Folder>
+        </Tree.Folder>
+      </Tree.Folder>
+    </Tree.Folder>
+    <Tree.File name="pom.xml" />
+    <Tree.File name="logging.txt" />
+  </Tree.Folder>
+</Tree>
+
+## Maven module layout
+
+Maven separates production code from test code across two source roots:
+
+<Columns cols={2}>
+  <Card title="src/main/java" icon="box">
+    Contains POJO classes used as request/response models. These are plain Java objects with no testing dependencies, so they live under `main` and can be reused outside tests if needed.
+  </Card>
+  <Card title="src/test/java" icon="flask-conical">
+    Contains everything that drives the tests: the `resources` package (utilities, enum, config), `stepDefinitions` (Cucumber glue code), `cucumber.Options` (test runner), and the `features` directory under `src/test/resources`.
+  </Card>
+</Columns>
+
+<Note>
+  Feature files must be placed under `src/test/resources` (not `src/test/java`) so that Maven includes them in the test classpath as resources, not as source files to compile.
+</Note>
+
+## Package responsibilities
+
+<AccordionGroup>
+  <Accordion title="pojo — Plain Old Java Objects">
+    This package holds the data model classes that REST-Assured serializes into JSON request bodies.
+
+    | Class | Purpose |
+    |---|---|
+    | `AddPlace` | Root payload for the Add Place API. Holds fields: `accuracy`, `address`, `language`, `name`, `phoneNumber`, `website`, `types` (list), and a nested `Location`. |
+    | `Location` | Nested object inside `AddPlace`. Holds `lat` and `lng` as `double`. |
+    | `Results` | Models a Get Place response for assertion purposes. |
+
+    REST-Assured's Jackson/Gson integration automatically serializes these objects to JSON when passed to `.body()`. No manual JSON string building is needed except for the delete payload, which is a simple one-field JSON string constructed inline in `TestDataBuild`.
+  </Accordion>
+
+  <Accordion title="resources — Utilities and configuration">
+    Three Java files and one properties file live here.
+
+    **`APIResources.java`** — An enum that maps logical API names to their URL paths:
+
+    ```java
+    public enum APIResources {
+        addPlaceAPI   ("/maps/api/place/add/json"),
+        getPlaceAPI   ("/maps/api/place/get/json"),
+        deletePlaceAPI("/maps/api/place/delete/json");
+    }
+    ```
+
+    Step definitions resolve an API name (e.g. `"addPlaceAPI"`) to its path at runtime via `APIResources.valueOf(resource).getResource()`. This decouples path strings from step code and makes renaming paths a one-file change.
+
+    **`Utils.java`** — The base utility class that all step definition classes extend. It provides three methods:
+
+    - `requestSpecification()` — builds and caches a `RequestSpecification` singleton with base URI, logging filters, API key, and content type.
+    - `getGlobalValue(String key)` — reads a named key from `global.properties` using `java.util.Properties`.
+    - `getJsonPath(Response response, String key)` — extracts a value from a JSON response body by key using REST-Assured's `JsonPath`.
+
+    **`TestDataBuild.java`** — Constructs request payloads. It exposes two methods:
+
+    - `addPlacePayload(String name, String language, String address)` — populates an `AddPlace` POJO with the provided scenario parameters plus hard-coded defaults (phone number, website, coordinates, types).
+    - `deletePlacePayload(String place_id)` — returns a raw JSON string `{"place_id":"<id>"}` because the delete body is trivial and does not warrant a POJO.
+
+    **`global.properties`** — Key/value configuration file. At minimum it must contain:
+
+    ```properties
+    baseURL=https://rahulshettyacademy.com
+    ```
+  </Accordion>
+
+  <Accordion title="stepDefinitions — Cucumber glue code">
+    **`StepDefinition.java`** — The main Cucumber glue class. It extends `Utils` to inherit `requestSpecification()` and `getJsonPath()`. It defines all step methods:
+
+    | Annotation | Step text | Behaviour |
+    |---|---|---|
+    | `@Given` | `add Place Payload with {string} {string} {string}` | Builds the add-place request spec with the given data |
+    | `@When` | `user calls {string} with {string} http request` | Resolves the API enum, sets response spec, executes GET or POST |
+    | `@Then` | `the API call got success with status code {int}` | Asserts `response.getStatusCode() == 200` |
+    | `@Then` | `{string} in response body is {string}` | Extracts a JSON field and asserts its value |
+    | `@Then` | `verify place_Id created maps to {string} using {string}` | Reads `place_id` from the response, fetches the place by ID, asserts the name matches |
+    | `@Given` | `DeletePlace Payload` | Builds the delete-place request spec using the stored `place_id` |
+
+    **`Hooks.java`** — Contains a single `@Before("@DeletePlace")` hook that ensures a valid `place_id` is available before any delete scenario runs. See [Architecture overview](/architecture/overview) for the full state-sharing explanation.
+  </Accordion>
+
+  <Accordion title="cucumber.Options — Test runner">
+    `TestRunner.java` is a JUnit 4 runner class annotated with `@RunWith(Cucumber.class)` and `@CucumberOptions`. It configures:
+
+    - `features` — path to the `.feature` files
+    - `glue` — packages Cucumber scans for step definitions and hooks
+    - `plugin` — report formatters (e.g. pretty console output, HTML report)
+    - `tags` — which tagged scenarios to include or exclude
+
+    Example structure:
+
+    ```java
+    @RunWith(Cucumber.class)
+    @CucumberOptions(
+        features = "src/test/resources/features",
+        glue     = {"stepDefinitions"},
+        plugin   = {"pretty", "html:target/cucumber-reports"},
+        tags     = "@Regression"
+    )
+    public class TestRunner {}
+    ```
+  </Accordion>
+
+  <Accordion title="features — Gherkin scenarios">
+    **`placeValidations.feature`** — The only feature file in the project. It defines two scenario groups:
+
+    - A `Scenario Outline` tagged `@AddPlace @Regression` that exercises the full add-and-verify flow across the examples table.
+    - A `Scenario` tagged `@DeletePlace @Regression` that verifies the delete operation.
+
+    Feature files are the living documentation of the framework — they describe what the API should do without any implementation details.
+  </Accordion>
+</AccordionGroup>
+
+## File-by-file reference
+
+| File | Package / Location | Role |
+|---|---|---|
+| `AddPlace.java` | `pojo` | POJO for add-place request body |
+| `Location.java` | `pojo` | Nested lat/lng object inside `AddPlace` |
+| `Results.java` | `pojo` | POJO for get-place response |
+| `APIResources.java` | `resources` | Enum mapping API names to URL paths |
+| `Utils.java` | `resources` | Base class: request spec, config reader, JSON path extractor |
+| `TestDataBuild.java` | `resources` | Payload factory for add and delete operations |
+| `global.properties` | `resources` | Runtime configuration (base URL, etc.) |
+| `StepDefinition.java` | `stepDefinitions` | All `@Given/@When/@Then` step implementations |
+| `Hooks.java` | `stepDefinitions` | `@Before` hook for `@DeletePlace` state setup |
+| `TestRunner.java` | `cucumber.Options` | JUnit entry point; configures Cucumber options |
+| `placeValidations.feature` | `features` | Gherkin scenarios for Add, Get, and Delete Place |
+| `pom.xml` | project root | Maven build config; declares REST-Assured, Cucumber, JUnit deps |
+| `logging.txt` | project root | Auto-generated request/response log file (created at runtime) |

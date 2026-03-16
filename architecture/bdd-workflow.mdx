@@ -1,0 +1,211 @@
+---
+title: 'BDD workflow'
+description: 'Step-by-step walkthrough of how a Gherkin scenario travels through the framework layers to produce an HTTP request and an assertion.'
+---
+
+## Execution flow
+
+Every test run follows the same path from Gherkin text to HTTP response:
+
+```
+TestRunner.java
+  └─► Cucumber reads .feature files
+        └─► Hooks evaluated (@Before / @After)
+              └─► Gherkin step matched to @Given/@When/@Then method
+                    └─► requestSpecification() builds / returns shared RequestSpec
+                          └─► TestDataBuild constructs POJO payload
+                                └─► REST-Assured sends HTTP request
+                                      └─► Response captured → assertions run
+```
+
+## The Add Place scenario walkthrough
+
+The feature file defines this scenario outline:
+
+```gherkin
+@AddPlace @Regression
+Scenario Outline: Verify is Place is being successfully added using AddPlaceAPI
+  Given add Place Payload with "<name>" "<language>" "<address>"
+  When user calls "addPlaceAPI" with "POST" http request
+  Then the API call got success with status code 200
+  And "status" in response body is "OK"
+  And "scope" in response body is "APP"
+  And verify place_Id created maps to "<name>" using "getPlaceAPI"
+
+  Examples:
+    | name   | language | address            |
+    | AHouse | English  | World Cross Center |
+```
+
+Cucumber instantiates one scenario per row in the `Examples` table. For the single row shown, the following steps execute:
+
+<Steps>
+  <Step title="Given: build the request">
+    Cucumber calls `add_place_payload_with("AHouse", "English", "World Cross Center")`.
+
+    `requestSpecification()` is invoked. Because `req` is `null` on the first call, it reads `baseURL` from `global.properties`, attaches request/response logging filters writing to `logging.txt`, appends `?key=qaclick123` to every request, sets `Content-Type: application/json`, and stores the result in the `static req` field for subsequent reuse.
+
+    `TestDataBuild.addPlacePayload()` then populates an `AddPlace` POJO:
+
+    ```java
+    addPlace.setAccuracy(50);
+    addPlace.setAddress("World Cross Center");
+    addPlace.setLanguage("English");
+    addPlace.setName("AHouse");
+    addPlace.setPhoneNumber("+20 1234567890");
+    addPlace.setWebsite("https://rahulshettyacademy.com");
+    // types: ["home", "house"]
+    // location: { lat: -40.123456, lng: 40.987654 }
+    ```
+
+    The assembled `RequestSpecification` (spec + body) is stored in the instance field `requestAdd`.
+  </Step>
+
+  <Step title="When: execute the POST request">
+    Cucumber calls `user_calls_with_http_request("addPlaceAPI", "POST")`.
+
+    `APIResources.valueOf("addPlaceAPI")` resolves to the enum constant whose `getResource()` returns `"/maps/api/place/add/json"`.
+
+    A `ResponseSpecBuilder` is configured to assert `HTTP 200` and `Content-Type: application/json`.
+
+    Because the method argument is `"POST"`, the branch `requestAdd.when().post(resourceAPI.getResource())` executes. REST-Assured serializes the `AddPlace` POJO to JSON, appends the query parameter, and sends:
+
+    ```
+    POST https://rahulshettyacademy.com/maps/api/place/add/json?key=qaclick123
+    Content-Type: application/json
+
+    { "location": { "lat": -40.123456, "lng": 40.987654 },
+      "accuracy": 50, "name": "AHouse", "phone_number": "+20 1234567890",
+      "address": "World Cross Center", "types": ["home","house"],
+      "website": "https://rahulshettyacademy.com", "language": "English" }
+    ```
+
+    The response is captured in the instance field `response`.
+  </Step>
+
+  <Step title="Then: assert status code 200">
+    `assertEquals(response.getStatusCode(), 200)` runs. If the API returns anything other than 200, JUnit throws an `AssertionError` and the scenario fails immediately.
+  </Step>
+
+  <Step title="Then: assert response body fields">
+    `getJsonPath(response, "status")` uses REST-Assured's `JsonPath` to extract the `status` key from the JSON response body and asserts it equals `"OK"`.
+
+    The same pattern repeats for `scope` → `"APP"`.
+  </Step>
+
+  <Step title="Then: verify place_id round-trip">
+    `verify_place_id_created_maps_to_using("AHouse", "getPlaceAPI")` runs:
+
+    1. `place_id = getJsonPath(response, "place_id")` reads the `place_id` from the add response and stores it in the `static` field.
+    2. A new `RequestSpecification` is built with `.queryParam("place_id", place_id)` appended.
+    3. `user_calls_with_http_request("getPlaceAPI", "GET")` fires a `GET` to `/maps/api/place/get/json?key=qaclick123&place_id=<id>`.
+    4. `getJsonPath(response, "name")` extracts `name` from the get response.
+    5. `assertEquals(actualName, "AHouse")` verifies the stored place name matches the originally submitted name.
+  </Step>
+</Steps>
+
+## The Delete Place scenario walkthrough
+
+```gherkin
+@DeletePlace @Regression
+Scenario: Verify if Delete Place functionality is working
+  Given DeletePlace Payload
+  When user calls "deletePlaceAPI" with "POST" http request
+  Then the API call got success with status code 200
+  And "status" in response body is "OK"
+```
+
+<Steps>
+  <Step title="@Before hook: ensure place_id exists">
+    Because this scenario is tagged `@DeletePlace`, Cucumber runs `Hooks.beforeScenario()` before any step executes.
+
+    ```java
+    @Before("@DeletePlace")
+    public void beforeScenario() throws IOException {
+        StepDefinition sd = new StepDefinition();
+        if (StepDefinition.place_id == null) {
+            sd.add_place_payload_with("Mahmoud", "Arabic", "Africa");
+            sd.user_calls_with_http_request("addPlaceAPI", "POST");
+            sd.verify_place_id_created_maps_to_using("Mahmoud", "getPlaceAPI");
+        }
+    }
+    ```
+
+    **When running the full `@Regression` suite:** The Add Place scenario runs first (it has no `@Before` hook). Its final step sets `StepDefinition.place_id`. When the Delete scenario starts, the hook finds `place_id != null` and skips the setup block.
+
+    **When running `@DeletePlace` in isolation:** `place_id` is `null`, so the hook executes the add-and-get flow automatically, populating `place_id` before the delete steps run.
+  </Step>
+
+  <Step title="Given: build the delete request">
+    `delete_place_payload()` calls `TestDataBuild.deletePlacePayload(place_id)`, which returns the string:
+
+    ```json
+    {
+      "place_id": "<the captured id>"
+    }
+    ```
+
+    This raw string is passed directly to `.body()` on the `RequestSpecification`.
+  </Step>
+
+  <Step title="When: execute the POST request">
+    `user_calls_with_http_request("deletePlaceAPI", "POST")` resolves `APIResources.deletePlaceAPI` to `"/maps/api/place/delete/json"` and POSTs the body.
+  </Step>
+
+  <Step title="Then: assert outcome">
+    `assertEquals(response.getStatusCode(), 200)` and `getJsonPath(response, "status") == "OK"` confirm the place was deleted successfully.
+  </Step>
+</Steps>
+
+## Test runner configuration
+
+Cucumber is driven by a JUnit 4 runner class in the `cucumber.Options` package:
+
+```java
+@RunWith(Cucumber.class)
+@CucumberOptions(
+    features = "src/test/resources/features",
+    glue     = {"stepDefinitions"},
+    plugin   = {"pretty", "html:target/cucumber-reports"},
+    tags     = "@Regression"
+)
+public class TestRunner {}
+```
+
+| Option | Value | Effect |
+|---|---|---|
+| `features` | `src/test/resources/features` | Directory Cucumber scans for `.feature` files |
+| `glue` | `stepDefinitions` | Package(s) Cucumber scans for `@Given/@When/@Then` and hook annotations |
+| `plugin` | `pretty`, `html:target/...` | Console formatter + HTML report written to `target/cucumber-reports` |
+| `tags` | `@Regression` | Only scenarios carrying the `@Regression` tag are executed |
+
+## Tagging and filtering
+
+The feature file uses two levels of tags:
+
+```gherkin
+@AddPlace @Regression          ← scenario-level tags
+Scenario Outline: ...
+
+@DeletePlace @Regression       ← scenario-level tags
+Scenario: ...
+```
+
+<Tabs>
+  <Tab title="Run all regression tests">
+    Set `tags = "@Regression"` in `@CucumberOptions`. Both scenarios execute.
+  </Tab>
+  <Tab title="Run only Add Place">
+    Set `tags = "@AddPlace"`. Only the `Scenario Outline` runs. The `@Before("@DeletePlace")` hook is not triggered.
+  </Tab>
+  <Tab title="Run only Delete Place">
+    Set `tags = "@DeletePlace"`. Only the `Scenario` runs. The hook fires and handles `place_id` setup automatically.
+  </Tab>
+  <Tab title="Exclude a tag">
+    Use `tags = "@Regression and not @DeletePlace"` to run all regression scenarios except the delete one.
+  </Tab>
+</Tabs>
+
+<Tip>
+  The `@Before` hook uses a tag expression (`"@DeletePlace"`) so it fires only for scenarios that need it. Avoid using an unscoped `@Before` (no tag filter) for setup that is specific to one scenario group — it would run before every scenario and waste time or cause failures.
+</Tip>

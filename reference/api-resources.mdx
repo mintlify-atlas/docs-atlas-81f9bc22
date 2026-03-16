@@ -1,0 +1,105 @@
+---
+title: APIResources
+description: Centralized enum registry mapping logical API names to endpoint path strings used throughout the framework.
+---
+
+`APIResources` is a Java enum in the `resources` package that acts as a single source of truth for all API endpoint paths. By storing paths as enum constants, the framework eliminates hardcoded strings in step definitions and makes it trivial to add, rename, or deprecate endpoints in one place.
+
+<Info>
+  Step definitions reference endpoints by name (e.g. `"addPlaceAPI"`), and Cucumber passes that string at runtime. `APIResources.valueOf(resource)` resolves it to the correct enum constant.
+</Info>
+
+## Enum constants
+
+All three constants map to Google Maps Places API-style paths:
+
+| Constant | Path |
+|---|---|
+| `addPlaceAPI` | `/maps/api/place/add/json` |
+| `getPlaceAPI` | `/maps/api/place/get/json` |
+| `deletePlaceAPI` | `/maps/api/place/delete/json` |
+
+## `getResource()` method
+
+Returns the raw path string stored in the enum constant. This is the value appended to the base URI when making a REST-Assured request.
+
+```java
+public String getResource()
+```
+
+**Return type:** `String` — the endpoint path, e.g. `/maps/api/place/add/json`.
+
+## Usage in step definitions
+
+The step definition receives the endpoint name as a plain string from the Gherkin feature file. `APIResources.valueOf()` converts it into the enum constant, then `getResource()` retrieves the path:
+
+```java
+APIResources resourceAPI = APIResources.valueOf(resource);
+// resourceAPI.getResource() => "/maps/api/place/add/json"
+response = requestAdd.when().post(resourceAPI.getResource());
+```
+
+The corresponding Gherkin step:
+
+```gherkin
+When user calls "addPlaceAPI" with "Post" http request
+```
+
+<Tip>
+  The string passed in Gherkin must exactly match an enum constant name — `valueOf()` is case-sensitive and throws `IllegalArgumentException` if no match is found.
+</Tip>
+
+## Adding a new endpoint
+
+Append a new constant to the enum. No other files need to change — the step definition already handles any value resolved by `valueOf()`.
+
+```java
+public enum APIResources {
+    addPlaceAPI   ("/maps/api/place/add/json"),
+    getPlaceAPI   ("/maps/api/place/get/json"),
+    deletePlaceAPI("/maps/api/place/delete/json"),
+    updatePlaceAPI("/maps/api/place/update/json");  // new
+
+    private String resource;
+
+    APIResources(String resource) {
+        this.resource = resource;
+    }
+
+    public String getResource() {
+        return resource;
+    }
+}
+```
+
+Then reference it from a feature file:
+
+```gherkin
+When user calls "updatePlaceAPI" with "Post" http request
+```
+
+## Full source
+
+<Accordion title="APIResources.java">
+
+```java
+package resources;
+
+public enum APIResources {
+    addPlaceAPI  ("/maps/api/place/add/json"),
+    getPlaceAPI  ("/maps/api/place/get/json"),
+    deletePlaceAPI("/maps/api/place/delete/json");
+
+    private String resource;
+
+    APIResources(String resource) {
+        this.resource = resource;
+    }
+
+    public String getResource() {
+        return resource;
+    }
+}
+```
+
+</Accordion>

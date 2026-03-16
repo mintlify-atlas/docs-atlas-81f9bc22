@@ -1,0 +1,195 @@
+---
+title: Running tests
+description: Run the BDD API test suite from the command line or IDE, filter by tag, and interpret console output.
+---
+
+The test suite is driven by Maven and Cucumber. The entry point is `TestRunner.java`, which Surefire picks up automatically.
+
+---
+
+## TestRunner configuration
+
+`TestRunner.java` tells Cucumber where to find features and step definitions:
+
+```java TestRunner.java
+@RunWith(Cucumber.class)
+@CucumberOptions(
+    features = "src/test/java/features",
+    plugin   = "json:target/jsonReports/cucumber-report.json",
+    glue     = {"stepDefinitions"}
+)
+public class TestRunner {}
+```
+
+- **`features`** — directory scanned recursively for `.feature` files.
+- **`plugin`** — writes a JSON report to `target/jsonReports/cucumber-report.json` after the run.
+- **`glue`** — package(s) where Cucumber looks for `@Given`/`@When`/`@Then` annotations and hooks.
+
+---
+
+## Running from the command line
+
+<Tabs>
+  <Tab title="Run all tests">
+    ```bash
+    mvn test
+    ```
+
+    Runs every scenario in `src/test/java/features/`. Generates the JSON report but does **not** generate the HTML report (use `mvn verify` for that).
+  </Tab>
+
+  <Tab title="Run a specific tag">
+    ```bash
+    mvn test -Dcucumber.filter.tags="@AddPlace"
+    ```
+
+    Runs only scenarios tagged `@AddPlace`. The `@Before("@DeletePlace")` hook in `Hooks.java` fires only when a `@DeletePlace` scenario is included, so this command will not trigger the hook.
+  </Tab>
+
+  <Tab title="Run the Regression suite">
+    ```bash
+    mvn test -Dcucumber.filter.tags="@Regression"
+    ```
+
+    Runs all scenarios tagged `@Regression`. Currently that includes both `@AddPlace` and `@DeletePlace`.
+  </Tab>
+
+  <Tab title="Run with HTML report">
+    ```bash
+    mvn verify
+    ```
+
+    Runs all tests (`test` phase) and then executes the `maven-cucumber-reporting` plugin (`verify` phase) to produce the HTML report in `target/`. Use this command in CI.
+  </Tab>
+</Tabs>
+
+---
+
+## Running from the IDE
+
+<Steps>
+  <Step title="Locate TestRunner.java">
+    In the Project Explorer (Eclipse) or Project pane (IntelliJ), navigate to `src/test/java/stepDefinitions/TestRunner.java`.
+  </Step>
+
+  <Step title="Run as JUnit">
+    Right-click the file and select **Run As → JUnit Test** (Eclipse) or click the green run arrow next to the class declaration (IntelliJ).
+
+    Cucumber uses the JUnit 4 runner, so the IDE treats it as a standard JUnit test class.
+  </Step>
+
+  <Step title="Run a single scenario">
+    Open the `.feature` file, right-click on a specific `Scenario` or `Scenario Outline`, and select **Run Scenario** (IntelliJ with Cucumber plugin) or **Run As → Cucumber Feature** (Eclipse with Cucumber plugin).
+  </Step>
+</Steps>
+
+<Note>
+When running from the IDE, the working directory is typically the project root. The `logging.txt` file and the `target/` directory are written relative to that root.
+</Note>
+
+---
+
+## Expected console output
+
+A passing run produces output similar to the following:
+
+```
+-------------------------------------------------------
+ T E S T S
+-------------------------------------------------------
+Running stepDefinitions.TestRunner
+
+Scenario Outline: Verify is Place is being successfully added  # features/placeValidations.feature:5
+  Given add Place Payload with "AHouse" "English" "World Cross Center"  # StepDefinition.java:18
+  When user calls "addPlaceAPI" with "POST" http request         # StepDefinition.java:24
+  Then the API call got success with status code 200             # StepDefinition.java:33
+  And "status" in response body is "OK"                          # StepDefinition.java:38
+  And "scope" in response body is "APP"                          # StepDefinition.java:38
+  And verify place_Id created maps to "AHouse" using "getPlaceAPI" # StepDefinition.java:43
+
+Scenario: Verify if Delete Place functionality is working  # features/placeValidations.feature:20
+  Given DeletePlace Payload                                  # StepDefinition.java:52
+  When user calls "deletePlaceAPI" with "POST" http request   # StepDefinition.java:24
+  Then the API call got success with status code 200         # StepDefinition.java:33
+  And "status" in response body is "OK"                      # StepDefinition.java:38
+
+2 Scenarios (2 passed)
+6 Steps (6 passed)
+
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+---
+
+## Debugging with logging.txt
+
+Every request and response is written to `logging.txt` in the project root. This file is created (or overwritten) each time `requestSpecification()` is first called in a run.
+
+Example content:
+
+```
+Request method:	POST
+Request URI:	https://rahulshettyacademy.com/maps/api/place/add/json?key=qaclick123
+Request params:	<none>
+Query params:	key=qaclick123
+Headers:		Accept=*/*
+				Content-Type=application/json; charset=UTF-8
+Body:
+{
+  "name": "AHouse",
+  "language": "English",
+  "address": "World Cross Center",
+  ...
+}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "status": "OK",
+  "place_id": "a1b2c3d4e5f6",
+  "scope": "APP"
+}
+```
+
+Use `logging.txt` to:
+- Confirm the exact URL and query parameters being sent.
+- Inspect request body serialization.
+- See the raw response when an assertion fails unexpectedly.
+
+---
+
+## Common failure scenarios
+
+<AccordionGroup>
+  <Accordion title="FileNotFoundException on startup">
+    **Cause:** The hardcoded Windows path in `Utils.getGlobalValue()` does not exist on the current machine.
+
+    **Fix:** Replace the `FileInputStream` with classpath loading. See the [configuration guide](/guides/configuration#the-hardcoded-path-bug-in-utilsjava).
+  </Accordion>
+
+  <Accordion title="Scenario step 'user calls X with Y http request' throws IllegalArgumentException">
+    **Cause:** The string passed as the resource name (e.g., `"addPlaceAPI"`) does not match any constant in the `APIResources` enum. `Enum.valueOf()` is case-sensitive.
+
+    **Fix:** Check the exact spelling and casing of the enum constant in `APIResources.java`.
+  </Accordion>
+
+  <Accordion title="@DeletePlace scenario fails with NullPointerException on place_id">
+    **Cause:** `StepDefinition.place_id` is `null`, meaning the add-place scenario did not run before the delete-place scenario, and the `@Before` hook in `Hooks.java` did not successfully create a place either.
+
+    **Fix:** Check `logging.txt` for the add-place request that the hook attempts. A 401 or 400 response from the API will leave `place_id` unset.
+  </Accordion>
+
+  <Accordion title="Assertion error: expected OK but was OVER_QUERY_LIMIT">
+    **Cause:** The API key `qaclick123` has exhausted its quota on the test server.
+
+    **Fix:** Contact the API provider or update the key in `Utils.requestSpecification()`.
+  </Accordion>
+
+  <Accordion title="No HTML report after mvn test">
+    **Cause:** The Masterthought plugin runs in the `verify` phase, which is not triggered by `mvn test`.
+
+    **Fix:** Use `mvn verify` to execute both the `test` and `verify` phases.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,266 @@
+---
+title: Writing tests
+description: Add new Gherkin scenarios, step definitions, API endpoints, and test data to the BDD API framework.
+---
+
+This guide walks through every layer you touch when writing a new test: the feature file, step definitions, API resources enum, test data builder, and hooks.
+
+---
+
+## Gherkin syntax basics
+
+Tests are written in Gherkin inside `.feature` files under `src/test/java/features/`. Each scenario follows the Given/When/Then pattern:
+
+| Keyword | Purpose |
+|---|---|
+| `Feature` | Groups related scenarios under a name |
+| `Background` | Steps that run before every scenario in the file |
+| `Scenario` | A single test case with fixed values |
+| `Scenario Outline` | A parameterised scenario driven by an `Examples` table |
+| `Given` | Precondition — sets up the request payload |
+| `When` | Action — makes the HTTP call |
+| `Then` | Assertion — validates the response |
+| `And` | Continuation of the previous Given/When/Then |
+
+---
+
+## Available step definitions
+
+All steps are implemented in `StepDefinition.java` (package `stepDefinitions`). There are six step patterns:
+
+<AccordionGroup>
+  <Accordion title="Given add Place Payload with {string} {string} {string}">
+    Builds the add-place request body via `TestDataBuild.addPlacePayload()` and attaches it to the request spec.
+
+    ```gherkin
+    Given add Place Payload with "MyHouse" "English" "123 Main St"
+    ```
+
+    Parameters map to `name`, `language`, and `address` in that order.
+  </Accordion>
+
+  <Accordion title="Given DeletePlace Payload">
+    Builds the delete-place request body using the `place_id` stored from a previous add-place call.
+
+    ```gherkin
+    Given DeletePlace Payload
+    ```
+
+    `place_id` is held in the static field `StepDefinition.place_id`. If it is `null` when the `@DeletePlace` scenario runs, the `@Before` hook in `Hooks.java` populates it automatically.
+  </Accordion>
+
+  <Accordion title="When user calls {string} with {string} http request">
+    Looks up the path from the `APIResources` enum and dispatches a `POST` or `GET` call.
+
+    ```gherkin
+    When user calls "addPlaceAPI" with "POST" http request
+    When user calls "getPlaceAPI" with "GET" http request
+    ```
+
+    The first argument must match an `APIResources` enum constant exactly (case-sensitive). The second argument is case-insensitive (`"post"`, `"POST"`, `"Post"` all work).
+  </Accordion>
+
+  <Accordion title="Then the API call got success with status code {int}">
+    Asserts that the response status code equals 200.
+
+    ```gherkin
+    Then the API call got success with status code 200
+    ```
+
+    <Note>The integer parameter in the step pattern is accepted but the assertion is hardcoded to 200 in the current implementation. If you need to assert a different status code, update `StepDefinition.the_api_call_got_success_with_status_code()`.</Note>
+  </Accordion>
+
+  <Accordion title='"{string}" in response body is "{string}"'>
+    Extracts a top-level JSON field from the response and asserts its value.
+
+    ```gherkin
+    And "status" in response body is "OK"
+    And "scope" in response body is "APP"
+    ```
+
+    Uses `getJsonPath(response, key)` from `Utils`.
+  </Accordion>
+
+  <Accordion title="Then verify place_Id created maps to {string} using {string}">
+    Captures the `place_id` from the add-place response, calls the get-place API, and asserts the returned name matches.
+
+    ```gherkin
+    And verify place_Id created maps to "AHouse" using "getPlaceAPI"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## How tags work
+
+Tags in Gherkin are prefixed with `@` and placed above a `Feature`, `Scenario`, or `Scenario Outline`.
+
+```gherkin
+@AddPlace @Regression
+Scenario Outline: Verify is Place is being successfully added using AddPlaceAPI
+```
+
+Existing tags:
+
+| Tag | Used on | Purpose |
+|---|---|---|
+| `@AddPlace` | Add-place scenario | Selects the add-place test in isolation |
+| `@DeletePlace` | Delete-place scenario | Selects the delete-place test; also triggers the `@Before` hook in `Hooks.java` |
+| `@Regression` | Both scenarios | Full regression suite — run both together |
+
+To add a new tag, simply write it above the scenario in the feature file and, if you need a `@Before` or `@After` hook for it, annotate that hook method with the matching tag string:
+
+```java
+@Before("@MyNewTag")
+public void setupForMyNewTag() {
+    // setup logic
+}
+```
+
+---
+
+## Adding a new API endpoint
+
+`APIResources.java` is an enum that maps logical names to URL paths:
+
+```java APIResources.java
+public enum APIResources {
+    addPlaceAPI    ("/maps/api/place/add/json"),
+    getPlaceAPI    ("/maps/api/place/get/json"),
+    deletePlaceAPI ("/maps/api/place/delete/json");
+
+    private final String resource;
+
+    APIResources(String resource) { this.resource = resource; }
+
+    public String getResource() { return resource; }
+}
+```
+
+To add a new endpoint, append a new constant:
+
+```java
+updatePlaceAPI ("/maps/api/place/update/json");
+```
+
+The new name (`updatePlaceAPI`) is then usable directly in the `When user calls` step.
+
+---
+
+## Adding test data
+
+`TestDataBuild.java` provides payload construction methods. The existing `addPlacePayload` sets fixed values for most fields and accepts `name`, `language`, and `address` as parameters:
+
+```java TestDataBuild.java
+public AddPlace addPlacePayload(String name, String language, String address) {
+    addPlace.setAccuracy(50);
+    addPlace.setAddress(address);
+    addPlace.setLanguage(language);
+    addPlace.setName(name);
+    addPlace.setPhoneNumber("+20 1234567890");
+    addPlace.setWebsite("https://rahulshettyacademy.com");
+    List<String> typesList = new ArrayList<>();
+    typesList.add("home");
+    typesList.add("house");
+    addPlace.setTypes(typesList);
+    Location location = new Location();
+    location.setLat(-40.123456);
+    location.setLng(40.987654);
+    addPlace.setLocation(location);
+    return addPlace;
+}
+```
+
+To add a payload for a new endpoint, add a new method that returns the appropriate POJO or a raw JSON string (as `deletePlacePayload` does):
+
+```java
+public String updatePlacePayload(String placeId, String newName) {
+    return "{\"place_id\":\"" + placeId + "\",\"name\":\"" + newName + "\"}";
+}
+```
+
+Then call it from a new `@Given` step in `StepDefinition.java`.
+
+---
+
+## When to use a @Before hook
+
+`@Before` hooks run before matching scenarios. The existing hook in `Hooks.java` solves a test-ordering dependency: the delete-place scenario requires a `place_id` that is normally produced by the add-place scenario. If the delete-place scenario runs in isolation (for example, via `mvn test -Dcucumber.filter.tags="@DeletePlace"`), no add-place scenario has run and `place_id` is `null`.
+
+The hook detects this and creates a place on the fly:
+
+```java Hooks.java
+@Before("@DeletePlace")
+public void beforeScenario() throws IOException {
+    StepDefinition sd = new StepDefinition();
+    if (StepDefinition.place_id == null) {
+        sd.add_place_payload_with("Mahmoud", "Arabic", "Africa");
+        sd.user_calls_with_http_request("addPlaceAPI", "POST");
+        sd.verify_place_id_created_maps_to_using("Mahmoud", "getPlaceAPI");
+    }
+}
+```
+
+Add a `@Before` hook when:
+- A scenario has a hard dependency on state produced by another scenario.
+- You need to seed data that cannot be expressed as a `Given` step within the scenario itself.
+- You want to reset shared static state before a tagged group of scenarios.
+
+---
+
+## Full example: adding a new scenario
+
+Suppose you want to verify the update-place endpoint. Here is the full set of changes:
+
+<Steps>
+  <Step title="Add the endpoint to APIResources">
+    ```java APIResources.java
+    updatePlaceAPI ("/maps/api/place/update/json");
+    ```
+  </Step>
+
+  <Step title="Add a payload builder to TestDataBuild">
+    ```java TestDataBuild.java
+    public String updatePlacePayload(String placeId, String newName) {
+        return "{\"place_id\":\"" + placeId
+             + "\",\"name\":\"" + newName + "\"}";
+    }
+    ```
+  </Step>
+
+  <Step title="Add a Given step to StepDefinition">
+    ```java StepDefinition.java
+    @Given("UpdatePlace Payload for {string} with name {string}")
+    public void update_place_payload(String placeId, String newName) throws IOException {
+        requestAdd = given().spec(requestSpecification())
+                            .body(data.updatePlacePayload(placeId, newName));
+    }
+    ```
+  </Step>
+
+  <Step title="Write the feature file scenario">
+    ```gherkin placeValidations.feature
+    @UpdatePlace @Regression
+    Scenario: Verify update place changes the name
+      Given UpdatePlace Payload for "some-place-id" with name "UpdatedHouse"
+      When user calls "updatePlaceAPI" with "POST" http request
+      Then the API call got success with status code 200
+      And "status" in response body is "OK"
+    ```
+  </Step>
+
+  <Step title="Add a @Before hook if the scenario depends on a place_id">
+    ```java Hooks.java
+    @Before("@UpdatePlace")
+    public void beforeUpdateScenario() throws IOException {
+        StepDefinition sd = new StepDefinition();
+        if (StepDefinition.place_id == null) {
+            sd.add_place_payload_with("TempPlace", "English", "Temp Address");
+            sd.user_calls_with_http_request("addPlaceAPI", "POST");
+            sd.verify_place_id_created_maps_to_using("TempPlace", "getPlaceAPI");
+        }
+    }
+    ```
+  </Step>
+</Steps>

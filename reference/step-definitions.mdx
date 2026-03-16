@@ -1,0 +1,234 @@
+---
+title: StepDefinition
+description: Cucumber step definition class wiring Gherkin steps to REST-Assured requests for the Places API test suite.
+---
+
+`StepDefinition` is the central Cucumber glue class. It extends [`Utils`](/reference/utils) to inherit the shared `RequestSpecification` and JSON path helpers, and uses [`TestDataBuild`](/reference/test-data-build) to construct request payloads.
+
+```java
+public class StepDefinition extends Utils
+```
+
+## Class-level fields
+
+| Field | Type | Description |
+|---|---|---|
+| `requestAdd` | `RequestSpecification` | Holds the request being built across Given/When steps. |
+| `resSpec` | `ResponseSpecBuilder` | Built in the `When` step but never applied to a spec. See [known limitation](#resspec-is-built-but-never-applied). |
+| `response` | `Response` | Populated after each HTTP call; read in subsequent `Then` steps. |
+| `data` | `TestDataBuild` | Instance-level factory for constructing request payloads. |
+| `place_id` | `static String` | Holds the place ID returned from an Add Place call. Static so it persists across scenario steps and between the Add and Delete scenarios. |
+
+### Why `place_id` is static
+
+Cucumber instantiates a new `StepDefinition` object for each scenario. A plain instance field would be reset to `null` at the start of every scenario, making it impossible to reuse the place ID created in one scenario inside a later `DeletePlace` scenario. Declaring it `static` keeps the value alive for the lifetime of the test run.
+
+<Note>
+  If scenarios run in parallel, a static field introduces a race condition. For parallel execution, use a thread-local or Cucumber's `ScenarioContext`.
+</Note>
+
+### `resSpec` is built but never applied
+
+The `ResponseSpecBuilder` is constructed in the `When` step and configured to expect HTTP 200 and `Content-Type: JSON`, but `.build()` is never called and the result is never passed to `.then().spec(...)`. Status code validation happens instead via the explicit `assertEquals` in the `Then` step.
+
+<Warning>
+  This is a known limitation of the current implementation. Content-type validation is silently skipped. To fix it, call `requestAdd.then().spec(resSpec.build())` after the HTTP call in the `When` step.
+</Warning>
+
+## Step definitions
+
+<AccordionGroup>
+
+<Accordion title="add Place Payload with {string} {string} {string}" defaultOpen>
+
+**Annotation:** `@Given`
+
+**Gherkin pattern:**
+```gherkin
+Given add Place Payload with "<name>" "<language>" "<address>"
+```
+
+**Method signature:**
+```java
+public void add_place_payload_with(String name, String language, String address) throws IOException
+```
+
+**Parameters:**
+
+<ParamField path="name" type="string" required>
+  Name of the place to add, e.g. `"Ritz Carlton"`.
+</ParamField>
+
+<ParamField path="language" type="string" required>
+  Language code for the place entry, e.g. `"French"`.
+</ParamField>
+
+<ParamField path="address" type="string" required>
+  Street address of the place, e.g. `"123 Main St"`.
+</ParamField>
+
+**What it does:** Calls `requestSpecification()` from `Utils` to obtain (or lazily create) the shared `RequestSpecification`, then attaches the serialized `AddPlace` payload built by `TestDataBuild.addPlacePayload()`. The result is stored in `requestAdd` for use in the next `When` step.
+
+</Accordion>
+
+<Accordion title="user calls {string} with {string} http request">
+
+**Annotation:** `@When`
+
+**Gherkin pattern:**
+```gherkin
+When user calls "<resource>" with "<method>" http request
+```
+
+**Method signature:**
+```java
+public void user_calls_with_http_request(String resource, String method)
+```
+
+**Parameters:**
+
+<ParamField path="resource" type="string" required>
+  Name of an `APIResources` enum constant, e.g. `"addPlaceAPI"`. Resolved via `APIResources.valueOf(resource)`.
+</ParamField>
+
+<ParamField path="method" type="string" required>
+  HTTP method string, case-insensitive. Supported values: `"post"`, `"get"`.
+</ParamField>
+
+**What it does:** Resolves the endpoint path from `APIResources`, constructs a `ResponseSpecBuilder` expecting status 200 and JSON content type (see [known limitation](#resspec-is-built-but-never-applied)), then dispatches the HTTP call. The `Response` object is stored in `response`.
+
+**Side effects:** Populates the `response` field read by all subsequent `Then` steps.
+
+</Accordion>
+
+<Accordion title="the API call got success with status code {int}">
+
+**Annotation:** `@Then`
+
+**Gherkin pattern:**
+```gherkin
+Then the API call got success with status code <int>
+```
+
+**Method signature:**
+```java
+public void the_api_call_got_success_with_status_code(Integer int1)
+```
+
+**Parameters:**
+
+<ParamField path="int1" type="integer" required>
+  Expected HTTP status code from the Gherkin step, e.g. `200`. Note: the method always asserts against the literal `200` regardless of the value passed — `int1` is captured but unused.
+</ParamField>
+
+**What it does:** Asserts that the actual response status code equals 200. The `int1` parameter is accepted to match the Gherkin pattern but is ignored in the assertion.
+
+<Warning>
+  The Gherkin parameter `int1` is ignored. The assertion is always `assertEquals(response.getStatusCode(), 200)`. Passing a different status code in the feature file has no effect.
+</Warning>
+
+</Accordion>
+
+<Accordion title="{string} in response body is {string}">
+
+**Annotation:** `@Then`
+
+**Gherkin pattern:**
+```gherkin
+Then "<key>" in response body is "<expectedValue>"
+```
+
+**Method signature:**
+```java
+public void in_response_body_is(String actualKeyValue, String actualKeyValue2)
+```
+
+**Parameters:**
+
+<ParamField path="actualKeyValue" type="string" required>
+  JSON path key to extract from the response body, e.g. `"status"`.
+</ParamField>
+
+<ParamField path="actualKeyValue2" type="string" required>
+  Expected string value for that key, e.g. `"OK"`.
+</ParamField>
+
+**What it does:** Extracts the value at `actualKeyValue` from the response JSON using `Utils.getJsonPath()`, then asserts it equals `actualKeyValue2`.
+
+</Accordion>
+
+<Accordion title="verify place_Id created maps to {string} using {string}">
+
+**Annotation:** `@Then`
+
+**Gherkin pattern:**
+```gherkin
+Then verify place_Id created maps to "<expectedName>" using "<resource>"
+```
+
+**Method signature:**
+```java
+public void verify_place_id_created_maps_to_using(String expectedName, String resource) throws IOException
+```
+
+**Parameters:**
+
+<ParamField path="expectedName" type="string" required>
+  The name expected to be returned when fetching the place by ID, e.g. `"Ritz Carlton"`.
+</ParamField>
+
+<ParamField path="resource" type="string" required>
+  `APIResources` enum constant name to use for the GET call, e.g. `"getPlaceAPI"`.
+</ParamField>
+
+**What it does:** Reads `place_id` from the current `response` (set by a prior Add Place call), rebuilds `requestAdd` with a `place_id` query parameter, calls `user_calls_with_http_request()` with `GET`, then asserts the returned `name` field matches `expectedName`.
+
+**Side effects:** Overwrites `requestAdd` and `response`. Writes the extracted ID into the static `place_id` field — making it available to the `DeletePlace` scenario.
+
+</Accordion>
+
+<Accordion title="DeletePlace Payload">
+
+**Annotation:** `@Given`
+
+**Gherkin pattern:**
+```gherkin
+Given DeletePlace Payload
+```
+
+**Method signature:**
+```java
+public void delete_place_payload() throws IOException
+```
+
+**Parameters:** None.
+
+**What it does:** Calls `requestSpecification()` to get the shared spec, then attaches the raw JSON delete body produced by `TestDataBuild.deletePlacePayload(place_id)`, where `place_id` is the static field populated by a prior scenario.
+
+</Accordion>
+
+</AccordionGroup>
+
+## Usage in feature files
+
+```gherkin
+Feature: Validating Places API
+
+  @AddPlace
+  Scenario Outline: Verify if Place is being Added successfully
+    Given add Place Payload with "<name>" "<language>" "<address>"
+    When user calls "addPlaceAPI" with "Post" http request
+    Then the API call got success with status code 200
+    And "status" in response body is "OK"
+    And verify place_Id created maps to "<name>" using "getPlaceAPI"
+
+    Examples:
+      | name         | language | address       |
+      | Ritz Carlton | French   | 123 Main St   |
+
+  Scenario: Verify if Delete Place functionality is working
+    Given DeletePlace Payload
+    When user calls "deletePlaceAPI" with "Post" http request
+    Then the API call got success with status code 200
+    And "status" in response body is "OK"
+```

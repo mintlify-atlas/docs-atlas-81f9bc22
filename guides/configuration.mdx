@@ -1,0 +1,185 @@
+---
+title: Configuration
+description: Configure the BDD API framework — base URL, request spec, API key, and Maven plugin settings.
+---
+
+This guide covers every configuration point in the framework: the `global.properties` file, the `Utils` request specification builder, the API key, and the Maven Surefire plugin.
+
+## global.properties
+
+All environment-level settings live in `src/test/java/resources/global.properties`. Currently one property is defined:
+
+```properties global.properties
+baseURL=https://rahulshettyacademy.com
+```
+
+This value is read at runtime by `Utils.getGlobalValue("baseURL")` and injected into the `RequestSpecBuilder` as the base URI for every request.
+
+---
+
+## The hardcoded path bug in Utils.java
+
+<Warning>
+`Utils.getGlobalValue()` contains a hardcoded absolute Windows path:
+
+```java
+FileInputStream file = new FileInputStream(
+    "C:\\Users\\a\\eclipse-workspace\\APIFramework\\src\\test\\java\\resources\\global.properties"
+);
+```
+
+This path only works on the original developer's machine. On any other system — or on CI — the test suite will throw a `FileNotFoundException` before a single scenario runs.
+</Warning>
+
+### Fix: use classpath loading
+
+Replace the `FileInputStream` with a classpath resource stream. Maven automatically places `src/test/java/resources/` on the test classpath, so no path manipulation is needed:
+
+```java Utils.java (fixed)
+public static String getGlobalValue(String key) throws IOException {
+    Properties prop = new Properties();
+    try (InputStream input = Utils.class
+            .getClassLoader()
+            .getResourceAsStream("global.properties")) {
+        if (input == null) {
+            throw new IOException("global.properties not found on classpath");
+        }
+        prop.load(input);
+    }
+    return prop.getProperty(key);
+}
+```
+
+This works on Windows, macOS, Linux, and inside CI containers without any changes.
+
+---
+
+## RequestSpecification setup
+
+`Utils.requestSpecification()` builds a shared `RequestSpecification` using a singleton pattern — it creates the spec on first call and reuses it for every subsequent call.
+
+```java Utils.java
+public RequestSpecification requestSpecification() throws IOException {
+    if (req == null) {
+        PrintStream log = new PrintStream(new FileOutputStream("logging.txt"));
+        req = new RequestSpecBuilder()
+                .setBaseUri(getGlobalValue("baseURL"))
+                .addFilter(RequestLoggingFilter.logRequestTo(log))
+                .addFilter(ResponseLoggingFilter.logResponseTo(log))
+                .addQueryParam("key", "qaclick123")
+                .setContentType(ContentType.JSON)
+                .build();
+    }
+    return req;
+}
+```
+
+The spec configures four things:
+
+<Columns cols={2}>
+  <Card title="Base URI" icon="globe">
+    Read from `global.properties` via `getGlobalValue("baseURL")`. Change the property to point tests at a different host.
+  </Card>
+  <Card title="Content type" icon="file-code">
+    All requests send and expect `application/json`. Set by `setContentType(ContentType.JSON)`.
+  </Card>
+  <Card title="Request/response logging" icon="file-text">
+    Every request and its response are written to `logging.txt` in the project root via Rest Assured's built-in filters.
+  </Card>
+  <Card title="API key query param" icon="key">
+    `key=qaclick123` is appended to every request URL automatically. No step definition needs to add it manually.
+  </Card>
+</Columns>
+
+---
+
+## API key
+
+The API key `qaclick123` is attached as a query parameter in `RequestSpecBuilder.addQueryParam("key", "qaclick123")`. This means every request URL will look like:
+
+```
+https://rahulshettyacademy.com/maps/api/place/add/json?key=qaclick123
+```
+
+To change the key, update it in `Utils.requestSpecification()` directly, or extract it into `global.properties` and read it the same way as `baseURL`:
+
+```properties global.properties
+baseURL=https://rahulshettyacademy.com
+apiKey=qaclick123
+```
+
+```java Utils.java (with extracted key)
+.addQueryParam("key", getGlobalValue("apiKey"))
+```
+
+---
+
+## Switching environments
+
+<Tip>
+To run the suite against a different environment, you only need to change `baseURL` in `global.properties`. Because the spec is initialized once per JVM run, all scenarios in a test run share the same base URI.
+
+For CI pipelines, you can template the properties file or pass the URL as a system property and read it with `System.getProperty()` as a fallback:
+
+```java
+String base = System.getProperty("baseURL",
+        getGlobalValue("baseURL"));
+```
+</Tip>
+
+---
+
+## Maven Surefire plugin
+
+The Surefire plugin is configured in `pom.xml` with one key setting:
+
+```xml pom.xml
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-surefire-plugin</artifactId>
+  <configuration>
+    <testFailureIgnore>true</testFailureIgnore>
+  </configuration>
+</plugin>
+```
+
+`testFailureIgnore=true` tells Maven to continue the build even when test assertions fail. Without this flag, a failed scenario would cause `mvn verify` to stop before the reporting plugin runs, which means no HTML report would be generated.
+
+<Note>
+`testFailureIgnore=true` does **not** hide failures. Tests that fail are still reported as failed in the console output, the JSON report, and the HTML Masterthought report. The build exit code will still be non-zero if `checkBuildResult` is enabled in the reporting plugin.
+</Note>
+
+---
+
+## Maven Cucumber Reporting plugin
+
+The `maven-cucumber-reporting` plugin (version 5.9.0) runs during the `verify` phase and converts the JSON report into an HTML report:
+
+```xml pom.xml
+<plugin>
+  <groupId>net.masterthought</groupId>
+  <artifactId>maven-cucumber-reporting</artifactId>
+  <version>5.9.0</version>
+  <executions>
+    <execution>
+      <id>execution</id>
+      <phase>verify</phase>
+      <goals>
+        <goal>generate</goal>
+      </goals>
+      <configuration>
+        <projectName>APIFramework</projectName>
+        <outputDirectory>${project.build.directory}</outputDirectory>
+        <inputDirectory>${project.build.directory}/jsonReports</inputDirectory>
+        <jsonFiles>
+          <param>**/*.json</param>
+        </jsonFiles>
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
+```
+
+- **`outputDirectory`** — where the HTML report is written (`target/`).
+- **`inputDirectory`** — where the plugin reads JSON results from (`target/jsonReports/`).
+- Run `mvn verify` (not `mvn test`) to trigger this phase and produce the report.

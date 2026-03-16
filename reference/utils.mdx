@@ -1,0 +1,216 @@
+---
+title: Utils
+description: Base utility class providing the shared RequestSpecification, global property lookup, and JSON path extraction used by all step definitions.
+---
+
+`Utils` is an abstract-style base class in the `resources` package. `StepDefinition` extends it to inherit three shared helpers without duplicating setup code across multiple glue classes.
+
+```java
+public class Utils
+```
+
+## `requestSpecification()`
+
+Returns a fully configured `RequestSpecification` suitable for all Places API calls.
+
+```java
+public RequestSpecification requestSpecification() throws IOException
+```
+
+### Singleton pattern
+
+The method uses lazy initialization via a `static` field (`req`). On the first call it builds and stores the spec; subsequent calls return the cached instance. This means all scenarios in a test run share a single `RequestSpecBuilder` configuration.
+
+```java
+static RequestSpecification req;
+
+public RequestSpecification requestSpecification() throws IOException {
+    if (req == null) {
+        // build once
+        req = new RequestSpecBuilder()...build();
+    }
+    return req;
+}
+```
+
+### Configuration applied
+
+| Setting | Value | How set |
+|---|---|---|
+| Base URI | Value of `baseURL` key in `global.properties` | `.setBaseUri(getGlobalValue("baseURL"))` |
+| Request logging | Writes full request to `logging.txt` | `.addFilter(RequestLoggingFilter.logRequestTo(log))` |
+| Response logging | Writes full response to `logging.txt` | `.addFilter(ResponseLoggingFilter.logResponseTo(log))` |
+| API key query param | `key=qaclick123` appended to every request | `.addQueryParam("key", "qaclick123")` |
+| Content type | `application/json` | `.setContentType(ContentType.JSON)` |
+
+### Logging to `logging.txt`
+
+A `PrintStream` wrapping a `FileOutputStream` to `logging.txt` (relative to the working directory) is created once and passed to both logging filters. Every HTTP request and response is appended there for debugging.
+
+<Note>
+  `logging.txt` is created or overwritten at the start of each test run (when `req` is `null`). Logs from multiple test runs do not accumulate.
+</Note>
+
+## `getGlobalValue(key)`
+
+Loads a value from the `global.properties` configuration file.
+
+```java
+public static String getGlobalValue(String key) throws IOException
+```
+
+### Parameters
+
+<ParamField path="key" type="string" required>
+  Property key to look up, e.g. `"baseURL"`.
+</ParamField>
+
+### Return value
+
+The string value associated with `key` in the properties file, or `null` if the key does not exist.
+
+### Hardcoded Windows path issue
+
+The current implementation hardcodes an absolute Windows path:
+
+```java
+FileInputStream file = new FileInputStream(
+    "C:\\Users\\a\\eclipse-workspace\\APIFramework\\src\\test\\java\\resources\\global.properties"
+);
+```
+
+<Warning>
+  This path only works on one specific machine. Running the framework on any other system — including CI/CD pipelines or non-Windows machines — will throw a `FileNotFoundException` at runtime.
+</Warning>
+
+### Fix: use classpath resource loading
+
+Replace the hardcoded path with a classpath-relative lookup. Because `global.properties` lives under `src/test/java/resources/`, it is already on the test classpath:
+
+```java
+public static String getGlobalValue(String key) throws IOException {
+    Properties prop = new Properties();
+    FileInputStream file = new FileInputStream(
+        System.getProperty("user.dir") + "/src/test/java/resources/global.properties"
+    );
+    prop.load(file);
+    return prop.getProperty(key);
+}
+```
+
+Or, more portably, using the classloader:
+
+```java
+public static String getGlobalValue(String key) throws IOException {
+    Properties prop = new Properties();
+    try (InputStream input = Utils.class.getClassLoader()
+            .getResourceAsStream("global.properties")) {
+        prop.load(input);
+    }
+    return prop.getProperty(key);
+}
+```
+
+## `getJsonPath(response, key)`
+
+Extracts a single value from a JSON response body using REST-Assured's `JsonPath`.
+
+```java
+public String getJsonPath(Response response, String key)
+```
+
+### Parameters
+
+<ParamField path="response" type="Response" required>
+  The REST-Assured `Response` object returned by a prior HTTP call.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  A GPath expression identifying the value to extract, e.g. `"status"`, `"place_id"`, or `"location.lat"`.
+</ParamField>
+
+### Return value
+
+The extracted value converted to `String` via `.toString()`. If the key does not exist, `JsonPath.get()` returns `null` and `.toString()` will throw a `NullPointerException`.
+
+### How it works
+
+```java
+public String getJsonPath(Response response, String key) {
+    String resp = response.asString();   // serialize response to JSON string
+    JsonPath js = new JsonPath(resp);    // parse with REST-Assured JsonPath
+    return js.get(key).toString();       // extract and stringify
+}
+```
+
+### Usage example
+
+```java
+// In a step definition:
+String placeId = getJsonPath(response, "place_id");
+String status  = getJsonPath(response, "status");
+```
+
+For nested paths:
+
+```java
+String lat = getJsonPath(response, "location.lat");
+```
+
+## Full source
+
+<Accordion title="Utils.java">
+
+```java
+package resources;
+
+import io.restassured.builder.RequestSpecBuilder;
+import io.restassured.filter.log.RequestLoggingFilter;
+import io.restassured.filter.log.ResponseLoggingFilter;
+import io.restassured.http.ContentType;
+import io.restassured.path.json.JsonPath;
+import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.Properties;
+
+public class Utils {
+    static RequestSpecification req;
+
+    public RequestSpecification requestSpecification() throws IOException {
+        if (req == null) {
+            PrintStream log = new PrintStream(new FileOutputStream("logging.txt"));
+            req = new RequestSpecBuilder()
+                    .setBaseUri(getGlobalValue("baseURL"))
+                    .addFilter(RequestLoggingFilter.logRequestTo(log))
+                    .addFilter(ResponseLoggingFilter.logResponseTo(log))
+                    .addQueryParam("key", "qaclick123")
+                    .setContentType(ContentType.JSON)
+                    .build();
+            return req;
+        } else {
+            return req;
+        }
+    }
+
+    public static String getGlobalValue(String key) throws IOException {
+        Properties prop = new Properties();
+        FileInputStream file = new FileInputStream(
+            "C:\\Users\\a\\eclipse-workspace\\APIFramework\\src\\test\\java\\resources\\global.properties"
+        );
+        prop.load(file);
+        return prop.getProperty(key);
+    }
+
+    public String getJsonPath(Response response, String key) {
+        String resp = response.asString();
+        JsonPath js = new JsonPath(resp);
+        return js.get(key).toString();
+    }
+}
+```
+
+</Accordion>

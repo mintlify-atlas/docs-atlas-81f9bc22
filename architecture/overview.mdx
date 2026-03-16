@@ -1,0 +1,122 @@
+---
+title: 'Architecture overview'
+description: 'High-level overview of the BDD API automation framework, its layers, and how components interact at runtime.'
+---
+
+This framework is organized into four distinct layers that carry a test scenario from a plain-English description all the way to an HTTP call and an assertion. Each layer has a single responsibility, making the framework easy to extend and maintain.
+
+## Layer diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Feature files (.feature)                │
+│          Gherkin scenarios written in business language      │
+│         (placeValidations.feature — @AddPlace, @DeletePlace) │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  Cucumber binds steps by regex
+┌──────────────────────────▼──────────────────────────────────┐
+│                   Step Definitions (Java)                    │
+│        StepDefinition.java  ·  Hooks.java                    │
+│   Translates Gherkin steps → REST-Assured DSL method calls   │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  Delegates to utility layer
+┌──────────────────────────▼──────────────────────────────────┐
+│              Utilities & Test Data (Java)                    │
+│          Utils.java  ·  TestDataBuild.java                   │
+│   Builds RequestSpec, reads config, constructs payloads      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  HTTP via REST-Assured
+┌──────────────────────────▼──────────────────────────────────┐
+│                   External API (Google Maps)                 │
+│   /maps/api/place/add/json                                   │
+│   /maps/api/place/get/json                                   │
+│   /maps/api/place/delete/json                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Layer responsibilities
+
+<Columns cols={2}>
+  <Card title="Feature files" icon="file-text">
+    Written in Gherkin. Each scenario describes user-facing behaviour using `Given / When / Then` steps. Tags like `@AddPlace` and `@Regression` control which scenarios run in a given suite.
+  </Card>
+  <Card title="Step definitions" icon="code">
+    Java methods annotated with `@Given`, `@When`, and `@Then`. Each annotation carries a regex or Cucumber Expression that Cucumber matches against feature-file steps at runtime.
+  </Card>
+  <Card title="Utilities" icon="wrench">
+    `Utils.java` holds a shared `RequestSpecification` singleton. `TestDataBuild.java` produces POJO payloads for each operation. Neither class knows about Gherkin.
+  </Card>
+  <Card title="REST-Assured" icon="globe">
+    The HTTP layer. It serializes POJOs to JSON, adds the API key query parameter, sends the request, and deserializes the response for assertions.
+  </Card>
+</Columns>
+
+## How Cucumber connects Gherkin to Java
+
+Cucumber scans the classpath for classes annotated with `@Given`, `@When`, and `@Then`. When it parses a `.feature` file, it matches each step's text against the annotation expressions using string matching (or regex). The matched Java method is then invoked with any captured groups passed as arguments.
+
+For example, the Gherkin step:
+
+```gherkin
+Given add Place Payload with "AHouse" "English" "World Cross Center"
+```
+
+…is matched by the expression `add Place Payload with {string} {string} {string}` and invokes:
+
+```java
+@Given("add Place Payload with {string} {string} {string}")
+public void add_place_payload_with(String name, String language, String address)
+    throws IOException {
+    requestAdd = given().spec(requestSpecification())
+                        .body(data.addPlacePayload(name, language, address));
+}
+```
+
+The three `{string}` tokens are Cucumber's built-in parameter type; they capture quoted strings and inject them as `String` method parameters.
+
+## REST-Assured as the HTTP layer
+
+REST-Assured provides a fluent BDD-style DSL for building and executing HTTP requests. In this framework it is configured once via `RequestSpecBuilder` inside `Utils.requestSpecification()` and reused across all step definitions:
+
+```java
+req = new RequestSpecBuilder()
+        .setBaseUri(getGlobalValue("baseURL"))       // read from global.properties
+        .addFilter(RequestLoggingFilter.logRequestTo(log))   // log to logging.txt
+        .addFilter(ResponseLoggingFilter.logResponseTo(log))
+        .addQueryParam("key", "qaclick123")            // API key on every request
+        .setContentType(ContentType.JSON)
+        .build();
+```
+
+The singleton pattern (`if (req == null)`) ensures the spec is built only once per test run, avoiding redundant I/O.
+
+## State sharing via static `place_id`
+
+The Add Place scenario and the Delete Place scenario are independent Cucumber scenarios. The delete operation requires the `place_id` produced by the add operation, so the framework shares it through a `static` field:
+
+```java
+// StepDefinition.java
+static String place_id;
+```
+
+`Hooks.java` carries a `@Before("@DeletePlace")` hook. Before every scenario tagged `@DeletePlace`, the hook checks whether `place_id` is already populated. If it is not (for example when running the delete scenario in isolation), the hook runs the full add-and-get sequence to obtain a valid `place_id`:
+
+```java
+@Before("@DeletePlace")
+public void beforeScenario() throws IOException {
+    StepDefinition sd = new StepDefinition();
+    if (StepDefinition.place_id == null) {
+        sd.add_place_payload_with("Mahmoud", "Arabic", "Africa");
+        sd.user_calls_with_http_request("addPlaceAPI", "POST");
+        sd.verify_place_id_created_maps_to_using("Mahmoud", "getPlaceAPI");
+    }
+}
+```
+
+<Info>
+  When the full `@Regression` suite runs in order, the Add Place scenario executes first and sets `place_id`. The Delete Place scenario then finds the value already set and the hook skips the setup block. Running the `@DeletePlace` scenario in isolation still works because the hook handles that case automatically.
+</Info>
+
+<Warning>
+  Using a `static` field for state means scenarios are not fully isolated. If the JVM is reused across test runs without resetting state, a stale `place_id` from a previous run could be used. Reset the field or rely on a fresh JVM invocation per run.
+</Warning>

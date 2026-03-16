@@ -1,0 +1,201 @@
+---
+title: Reports
+description: Understand and use the JSON report, HTML Masterthought report, and logging.txt produced by the BDD API framework.
+---
+
+The framework produces three reporting artifacts after a test run: a Cucumber JSON report, an HTML Masterthought report, and a plain-text request/response log.
+
+---
+
+## JSON report
+
+**Location:** `target/jsonReports/cucumber-report.json`
+
+The JSON report is written by the Cucumber JUnit runner using the `json` plugin configured in `TestRunner.java`:
+
+```java TestRunner.java
+@CucumberOptions(
+    plugin = "json:target/jsonReports/cucumber-report.json"
+)
+```
+
+It is generated at the end of every `mvn test` or `mvn verify` run. The file contains the full execution tree — features, scenarios, steps, durations, and pass/fail status — in the standard Cucumber JSON schema.
+
+Example structure:
+
+```json cucumber-report.json
+[
+  {
+    "id": "validating-place-apis",
+    "name": "Validating Place APIs",
+    "elements": [
+      {
+        "id": "validating-place-apis;verify-is-place-is-being-successfully-added-using-addplaceapi",
+        "name": "Verify is Place is being successfully added using AddPlaceAPI",
+        "type": "scenario",
+        "steps": [
+          {
+            "keyword": "Given ",
+            "name": "add Place Payload with \"AHouse\" \"English\" \"World Cross Center\"",
+            "result": {
+              "status": "passed",
+              "duration": 12000000
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+
+<Note>
+The `target/jsonReports/` directory must exist before the run, or the JSON plugin will fail to write the file. Maven creates `target/` automatically, but not subdirectories. Add `<mkdirs>` configuration to Surefire or create the directory in a `pre-test` Maven goal if you encounter this issue.
+</Note>
+
+---
+
+## HTML Masterthought report
+
+**Location:** `target/cucumber-html-reports/overview-features.html` (generated inside `target/`)
+
+The HTML report is produced by the `maven-cucumber-reporting` plugin during the `verify` phase. Run:
+
+```bash
+mvn verify
+```
+
+### Plugin configuration
+
+```xml pom.xml
+<plugin>
+  <groupId>net.masterthought</groupId>
+  <artifactId>maven-cucumber-reporting</artifactId>
+  <version>5.9.0</version>
+  <executions>
+    <execution>
+      <id>execution</id>
+      <phase>verify</phase>
+      <goals>
+        <goal>generate</goal>
+      </goals>
+      <configuration>
+        <projectName>APIFramework</projectName>
+        <outputDirectory>${project.build.directory}</outputDirectory>
+        <inputDirectory>${project.build.directory}/jsonReports</inputDirectory>
+        <jsonFiles>
+          <param>**/*.json</param>
+        </jsonFiles>
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
+```
+
+### Configuration options
+
+<AccordionGroup>
+  <Accordion title="mergeFeaturesById">
+    **Default:** `false`
+
+    When `true`, scenarios from multiple JSON files that share the same feature ID are merged into a single feature entry in the report. Useful when parallel test execution splits one feature across multiple JSON files.
+
+    ```xml
+    <mergeFeaturesById>true</mergeFeaturesById>
+    ```
+  </Accordion>
+
+  <Accordion title="mergeFeaturesWithRetest">
+    **Default:** `false`
+
+    When `true`, the plugin merges a rerun JSON report with the original report, replacing failed scenarios with their rerun results. Use this when you run failed scenarios a second time and want the final report to reflect retried outcomes.
+
+    ```xml
+    <mergeFeaturesWithRetest>true</mergeFeaturesWithRetest>
+    ```
+  </Accordion>
+
+  <Accordion title="checkBuildResult">
+    **Default:** `false`
+
+    When `true`, the plugin fails the Maven build if any scenario in the report has a non-passing status. Pair this with `testFailureIgnore=true` in Surefire so that the build reaches the `verify` phase even when tests fail, then let the reporting plugin determine the final build outcome.
+
+    ```xml
+    <checkBuildResult>true</checkBuildResult>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Opening the report
+
+<Steps>
+  <Step title="Run the full build">
+    ```bash
+    mvn verify
+    ```
+  </Step>
+
+  <Step title="Navigate to the report directory">
+    ```bash
+    open target/cucumber-html-reports/overview-features.html
+    ```
+
+    On Windows:
+    ```powershell
+    start target\cucumber-html-reports\overview-features.html
+    ```
+
+    On Linux without a desktop environment, copy the file path and open it in a browser directly.
+  </Step>
+
+  <Step title="Explore the report">
+    The overview page lists all features with pass/fail counts. Click a feature row to drill into individual scenarios, step results, and timing data.
+  </Step>
+</Steps>
+
+---
+
+## logging.txt
+
+**Location:** `logging.txt` in the project root (next to `pom.xml`)
+
+`logging.txt` is created by `Utils.requestSpecification()` using Rest Assured's built-in logging filters:
+
+```java Utils.java
+PrintStream log = new PrintStream(new FileOutputStream("logging.txt"));
+req = new RequestSpecBuilder()
+        .addFilter(RequestLoggingFilter.logRequestTo(log))
+        .addFilter(ResponseLoggingFilter.logResponseTo(log))
+        ...
+        .build();
+```
+
+### What is captured
+
+| Section | Content |
+|---|---|
+| Request | HTTP method, full URI (including query params), headers, and serialized request body |
+| Response | Status line, response headers, and full response body |
+
+Because the spec is a singleton, the file is opened once and all requests from all scenarios in the run are appended sequentially. The file is overwritten at the start of each new run (because `FileOutputStream` is constructed without the `append` flag).
+
+### Using logging.txt for debugging
+
+<Columns cols={2}>
+  <Card title="Verify the request" icon="arrow-up-right">
+    Confirm the exact URL, query params (including `key=qaclick123`), and JSON body that was sent. This rules out serialization issues in `TestDataBuild`.
+  </Card>
+  <Card title="Inspect the raw response" icon="arrow-down-left">
+    When an assertion like `"status" in response body is "OK"` fails, check the actual response body in `logging.txt` to see what the API returned instead.
+  </Card>
+  <Card title="Trace scenario order" icon="list-ordered">
+    Requests appear in execution order. Use the request URIs to identify which scenario sent which request, especially useful when the `@Before` hook fires and adds extra requests before a scenario.
+  </Card>
+  <Card title="Check auth failures" icon="shield-x">
+    A 401 or 403 response body in `logging.txt` indicates an invalid or expired API key. Update `key` in `Utils.requestSpecification()`.
+  </Card>
+</Columns>
+
+<Warning>
+`logging.txt` is written to the project root, not inside `target/`. It is not cleaned by `mvn clean`. If you need a fresh log, delete it manually or add it to a Maven clean plugin configuration.
+</Warning>

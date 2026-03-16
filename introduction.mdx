@@ -1,0 +1,78 @@
+---
+title: "Introduction"
+description: "A BDD API test automation framework built with Cucumber, REST-Assured, and Java for validating Place API endpoints."
+---
+
+## Overview
+
+This framework provides a complete **Behavior-Driven Development (BDD)** solution for automated API testing. Built on top of [REST-Assured](https://rest-assured.io/) and [Cucumber](https://cucumber.io/), it enables teams to write human-readable test scenarios in Gherkin that directly validate REST API behavior.
+
+The framework targets a Google Maps-style Places API (hosted at `https://rahulshettyacademy.com`) and demonstrates a full CRUD testing workflow: creating a place, reading it back, and deleting it — all verified end-to-end.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get your environment set up and run your first test in minutes
+  </Card>
+  <Card title="Framework Architecture" icon="sitemap" href="/architecture/overview">
+    Understand how the BDD layers fit together
+  </Card>
+  <Card title="Writing Tests" icon="pen-to-square" href="/guides/writing-tests">
+    Learn how to write new Gherkin scenarios and step definitions
+  </Card>
+  <Card title="Reference" icon="book" href="/reference/api-resources">
+    Explore the full class and method reference
+  </Card>
+</CardGroup>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="BDD with Gherkin" icon="file-lines">
+    Write plain-English test scenarios using Cucumber's Given/When/Then syntax
+  </Card>
+  <Card title="REST-Assured integration" icon="network-wired">
+    Fluent Java DSL for building and asserting HTTP requests and responses
+  </Card>
+  <Card title="POJO serialization" icon="code">
+    Strongly-typed request bodies using Jackson-compatible Java POJOs
+  </Card>
+  <Card title="Lifecycle hooks" icon="rotate">
+    Cucumber `@Before` hooks for automatic test data setup across scenarios
+  </Card>
+  <Card title="Enum endpoint registry" icon="list">
+    All API paths centralized in a single `APIResources` enum — no magic strings
+  </Card>
+  <Card title="Externalized configuration" icon="gear">
+    Base URL and other settings loaded from `global.properties` — no hardcoding
+  </Card>
+  <Card title="JSON test reports" icon="chart-bar">
+    Masterthought Cucumber reports generated automatically on `mvn verify`
+  </Card>
+  <Card title="Request/response logging" icon="file-text">
+    All HTTP traffic logged to `logging.txt` for debugging and audit
+  </Card>
+</CardGroup>
+
+## Technology stack
+
+| Component | Technology | Version |
+|---|---|---|
+| Language | Java | 11+ |
+| Build tool | Maven | 3.x |
+| BDD framework | Cucumber (JUnit) | 7.33.0 |
+| HTTP client | REST-Assured | 6.0.0 |
+| JSON serialization | Jackson Databind | 3.0.3 |
+| Scripting engine | Groovy | 3.0.25 |
+| Reporting | maven-cucumber-reporting | 5.9.0 |
+
+## What is being tested
+
+The framework validates three API endpoints of a Places API:
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/maps/api/place/add/json` | POST | Create a new place |
+| `/maps/api/place/get/json` | GET | Retrieve a place by ID |
+| `/maps/api/place/delete/json` | POST | Delete a place by ID |
+
+All requests are authenticated with an API key (`key=qaclick123`) passed as a query parameter on every call.

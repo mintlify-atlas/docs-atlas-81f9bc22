@@ -1,0 +1,363 @@
+---
+title: "FAQ"
+description: "Frequently asked questions about the BDD API automation testing framework using Cucumber, REST-Assured, and Maven."
+---
+
+<AccordionGroup>
+
+  <Accordion title="Why do my tests fail immediately with a FileNotFoundException?">
+    The `Utils.java` file contains a hardcoded Windows absolute path to `global.properties`. When you run the tests on any machine other than the original development machine, this path does not exist and the file cannot be loaded.
+
+    **Affected code in `Utils.java`:**
+
+    ```java
+    // Hardcoded — breaks on any other machine
+    FileInputStream fis = new FileInputStream(
+      "C:\\Users\\a\\eclipse-workspace\\APIFramework\\src\\test\\java\\resources\\global.properties"
+    );
+    ```
+
+    **Fix — use a classpath-relative path:**
+
+    ```java
+    FileInputStream fis = new FileInputStream(
+      System.getProperty("user.dir") + "/src/test/java/resources/global.properties"
+    );
+    ```
+
+    Alternatively, load the file directly from the classpath so the path works on all operating systems:
+
+    ```java
+    InputStream fis = Utils.class.getClassLoader()
+        .getResourceAsStream("global.properties");
+    Properties prop = new Properties();
+    prop.load(fis);
+    ```
+
+    <Warning>
+      The hardcoded path uses Windows-style backslashes (`\`). On Linux or macOS this will always fail, even if the rest of the path happened to match.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Why does the @DeletePlace scenario fail when run in isolation?">
+    The `@DeletePlace` scenario depends on a `place_id` that is normally produced by a preceding `@AddPlace` scenario. When `@DeletePlace` runs alone, no `place_id` has been set and the DELETE request has nothing to act on.
+
+    **How the Hooks mechanism works:**
+
+    `Hooks.java` contains a `@Before` hook scoped to the `@DeletePlace` tag:
+
+    ```java
+    @Before("@DeletePlace")
+    public void beforeScenario() {
+        if (StepDefinition.place_id == null) {
+            // Automatically calls the Add Place API to seed a place_id
+            // before the Delete scenario executes
+        }
+    }
+    ```
+
+    When `place_id` is `null` (i.e., no prior `@AddPlace` scenario ran in the same session), the hook fires an HTTP POST to `addPlaceAPI` and stores the returned `place_id` in the static field. The `@DeletePlace` scenario can then proceed normally.
+
+    <Note>
+      Running `@DeletePlace` in isolation is safe precisely because of this hook — it will always ensure a valid `place_id` exists before attempting the delete.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Can I run just one scenario type?">
+    Yes. Use the `cucumber.filter.tags` system property to select scenarios by tag at runtime. Pass the property via the Maven command line:
+
+    ```bash
+    # Run only Add Place scenarios
+    mvn test -Dcucumber.filter.tags="@AddPlace"
+
+    # Run only Delete Place scenarios
+    mvn test -Dcucumber.filter.tags="@DeletePlace"
+
+    # Run all regression scenarios
+    mvn test -Dcucumber.filter.tags="@Regression"
+    ```
+
+    You can also combine tags using logical operators:
+
+    ```bash
+    # Run scenarios tagged with both @AddPlace and @Regression
+    mvn test -Dcucumber.filter.tags="@AddPlace and @Regression"
+
+    # Run scenarios tagged with either tag
+    mvn test -Dcucumber.filter.tags="@AddPlace or @DeletePlace"
+    ```
+
+    <Tip>
+      Tags are defined in your `.feature` files directly above the `Scenario:` keyword. Make sure the tag you filter on is present in at least one scenario, otherwise no tests will run.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="How do I add a new API endpoint?">
+    Adding a new endpoint involves three steps:
+
+    **1. Register the endpoint in the `APIResources` enum**
+
+    ```java
+    public enum APIResources {
+        AddPlaceAPI("/maps/api/place/add/json"),
+        GetPlaceAPI("/maps/api/place/get/json"),
+        DeletePlaceAPI("/maps/api/place/delete/json"),
+        MyNewEndpointAPI("/maps/api/myendpoint/json");  // add here
+
+        private final String resource;
+
+        APIResources(String resource) {
+            this.resource = resource;
+        }
+
+        public String getResource() {
+            return resource;
+        }
+    }
+    ```
+
+    **2. Add step definitions if the new endpoint needs unique request/response handling**
+
+    ```java
+    @When("user calls {string} with {string} http request")
+    public void user_calls_with_http_request(String resource, String method) {
+        // existing routing logic handles GET and POST
+        // extend here if your endpoint requires different handling
+    }
+    ```
+
+    **3. Write the feature file scenario**
+
+    ```gherkin
+    @MyNewEndpoint
+    Scenario: Validate my new endpoint
+      Given I establish a connection to the API
+      When user calls "MyNewEndpointAPI" with "GET" http request
+      Then the API call got success with status code 200
+    ```
+  </Accordion>
+
+  <Accordion title="Where are the test reports generated?">
+    The framework produces two types of reports depending on which Maven lifecycle phase you run.
+
+    **JSON report** — produced by `mvn test`:
+
+    ```
+    target/jsonReports/cucumber-report.json
+    ```
+
+    This is configured via the `plugin` option in the `TestRunner` `@CucumberOptions` annotation:
+
+    ```java
+    @CucumberOptions(
+        features = "src/test/java/features",
+        glue = "stepDefinitions",
+        plugin = { "json:target/jsonReports/cucumber-report.json" }
+    )
+    ```
+
+    **HTML report** — produced by `mvn verify`:
+
+    ```
+    target/
+    ```
+
+    The `maven-cucumber-reporting` plugin processes the JSON output and generates an HTML report during the `verify` phase. Run `mvn verify` to get both the JSON and HTML reports.
+
+    <Tip>
+      Open the generated HTML file in a browser for a visual breakdown of passed, failed, and skipped scenarios with request/response details.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Why does my test pass in the console but I don't see the HTML report?">
+    The HTML report is generated by the `maven-cucumber-reporting` plugin, which is bound to Maven's `verify` lifecycle phase — not the `test` phase.
+
+    | Command | What runs | HTML report? |
+    |---|---|---|
+    | `mvn test` | Compiles and runs tests | No |
+    | `mvn verify` | Runs tests + post-integration plugins | Yes |
+
+    Always use `mvn verify` when you want the HTML report:
+
+    ```bash
+    mvn verify
+    ```
+
+    <Warning>
+      If you only run `mvn test`, the JSON report at `target/jsonReports/cucumber-report.json` is still created, but the HTML conversion step is skipped entirely.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="What does testFailureIgnore=true in the Surefire plugin do?">
+    The `testFailureIgnore` configuration in the Maven Surefire plugin tells Maven to continue the build even when test assertions fail.
+
+    ```xml
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-surefire-plugin</artifactId>
+      <configuration>
+        <testFailureIgnore>true</testFailureIgnore>
+      </configuration>
+    </plugin>
+    ```
+
+    Without this setting, a single test failure causes Maven to stop the build and skip any subsequent phases — including `verify`. This means the HTML report would never be generated when there are failures.
+
+    Setting `testFailureIgnore=true` ensures Maven always reaches the `verify` phase so the `maven-cucumber-reporting` plugin can produce the HTML report regardless of test outcomes.
+
+    <Note>
+      This setting does not hide test failures. Failed scenarios are still reported accurately in both the JSON and HTML reports. It only prevents Maven from treating test failures as build-breaking errors.
+    </Note>
+  </Accordion>
+
+  <Accordion title="What is logging.txt and what does it contain?">
+    `logging.txt` is a log file written to disk during test execution. Every HTTP request sent and every HTTP response received is recorded there by REST-Assured's built-in logging filters.
+
+    The filters are configured in `Utils.java` using `RequestLoggingFilter` and `ResponseLoggingFilter`:
+
+    ```java
+    PrintStream log = new PrintStream(new FileOutputStream("logging.txt"));
+
+    requestSpec.filters(
+        new RequestLoggingFilter(log),
+        new ResponseLoggingFilter(log)
+    );
+    ```
+
+    **Contents of `logging.txt` include:**
+
+    - Full request URL and query parameters (including the `key` parameter)
+    - HTTP method and headers
+    - Request body (JSON payload for POST requests)
+    - HTTP response status code and headers
+    - Full response body
+
+    <Tip>
+      `logging.txt` is invaluable for debugging unexpected status codes or response bodies. Check it first when a step definition assertion fails.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="Why is resSpec defined but never used?">
+    This is a known limitation in the current codebase. A `ResponseSpecBuilder` is instantiated inside the `user_calls_with_http_request` step definition but the resulting spec is never applied to the request.
+
+    ```java
+    // resSpec is built...
+    ResponseSpecBuilder resBuilder = new ResponseSpecBuilder();
+    resBuilder.expectResponseTime(Matchers.lessThan(20000L), TimeUnit.MILLISECONDS);
+    ResponseSpecification resSpec = resBuilder.build();
+
+    // ...but .spec(resSpec) is never chained onto the request:
+    response = requestSpec
+        .when()
+        .get(APIResources.valueOf(resource).getResource());
+    // ^ resSpec is not applied here
+    ```
+
+    As a result, the response time assertion defined in `resSpec` is silently skipped. Status code assertions still run because they are performed separately in the `Then` step using `response.getStatusCode()`.
+
+    **To apply the spec, chain it onto the response:**
+
+    ```java
+    response = requestSpec
+        .when()
+        .get(APIResources.valueOf(resource).getResource())
+        .then()
+        .spec(resSpec)
+        .extract()
+        .response();
+    ```
+
+    <Warning>
+      Until `resSpec` is applied, there is no enforcement of response time thresholds. Slow API responses will not cause test failures.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Can I run tests in parallel?">
+    Parallel execution is currently not safe with this codebase. The `place_id` field in `StepDefinition` is declared as a `static` variable:
+
+    ```java
+    public class StepDefinition {
+        public static String place_id;  // shared across all threads
+        // ...
+    }
+    ```
+
+    When multiple scenarios run concurrently, they all read from and write to the same `place_id` reference. An `@AddPlace` scenario in one thread could overwrite the `place_id` that a `@DeletePlace` scenario in another thread is about to use, causing non-deterministic failures.
+
+    **To enable safe parallel execution, refactor to thread-local state:**
+
+    ```java
+    public class StepDefinition {
+        public static ThreadLocal<String> place_id = new ThreadLocal<>();
+
+        // Writer:
+        place_id.set(response.jsonPath().getString("place_id"));
+
+        // Reader:
+        String id = place_id.get();
+    }
+    ```
+
+    You would also need to update `Hooks.java` to read and write via `place_id.get()` and `place_id.set(...)` consistently.
+
+    <Warning>
+      Do not enable Surefire or Cucumber parallel execution settings until the static state has been refactored. Doing so will produce intermittent test failures that are difficult to reproduce.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="How do I change the base URL?">
+    The base URL is read from the `baseURL` property in `global.properties`:
+
+    ```properties
+    baseURL=https://rahulshettyacademy.com
+    ```
+
+    Update that value to point to a different environment:
+
+    ```properties
+    baseURL=https://staging.rahulshettyacademy.com
+    ```
+
+    <Warning>
+      The hardcoded path in `Utils.java` must be fixed before this change will take effect. If `Utils.java` cannot locate `global.properties`, it will throw a `FileNotFoundException` and the `baseURL` value will never be read. See the first FAQ entry for the fix.
+    </Warning>
+
+    After fixing the path, `Utils.java` loads the property like this:
+
+    ```java
+    Properties prop = new Properties();
+    FileInputStream fis = new FileInputStream(
+        System.getProperty("user.dir") + "/src/test/java/resources/global.properties"
+    );
+    prop.load(fis);
+    String baseURL = prop.getProperty("baseURL");
+    ```
+
+    The API key (`qaclick123`) is passed as a fixed query parameter (`key=qaclick123`) and is not read from `global.properties`. If you need to change the API key per environment, add it to `global.properties` and update `Utils.java` accordingly.
+  </Accordion>
+
+  <Accordion title="What Java version is required?">
+    **Java 11 or later** is recommended. The framework uses no Java-version-specific APIs beyond what REST-Assured 6.0.0 and Cucumber 7.x require, but Java 8 is end-of-life and should be avoided for new development.
+
+    **Maven 3.x** is required to build and run the project.
+
+    Verify your installed versions before running:
+
+    ```bash
+    java -version
+    mvn -version
+    ```
+
+    Expected output (versions may differ):
+
+    ```
+    openjdk version "17.0.x" ...
+    Apache Maven 3.9.x ...
+    ```
+
+    <Tip>
+      If you are using an IDE such as Eclipse or IntelliJ IDEA, ensure the project's JDK setting matches your installed Java version. A mismatch between the IDE JDK and the Maven JDK is a common source of build failures.
+    </Tip>
+  </Accordion>
+
+</AccordionGroup>
